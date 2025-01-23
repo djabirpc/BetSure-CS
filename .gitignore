@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+*.env
+*.venv
+*.log
+
+# Selenium
+chromedriver
+geckodriver
+LICENSE.chromedriver
