@@ -6,6 +6,6 @@ __pycache__/
 *.log
 
 # Selenium
-chromedriver
+chromedriver.exe
 geckodriver
 LICENSE.chromedriver
