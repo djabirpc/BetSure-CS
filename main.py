@@ -16,6 +16,8 @@ def setup_driver():
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--start-maximized')
+    chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
@@ -168,92 +170,6 @@ def scrape_upcoming_matches():
     
     return matches_by_week
 
-
-def scrape_matches_this_week():
-    print("Setting up Chrome driver...")
-    driver = setup_driver()
-    matches_this_week = []
-    
-    try:
-        print("Attempting to access HLTV.org...")
-        driver.get('https://www.hltv.org/matches')
-        
-        handle_cookie_consent(driver)
-        
-        print("Waiting for page to load...")
-        wait = WebDriverWait(driver, 20)
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "upcomingMatchesWrapper")))
-        time.sleep(3)
-        
-        print("Page loaded successfully. Extracting matches...")
-        match_elements = driver.find_elements(By.CLASS_NAME, "upcomingMatch")
-        
-        today = datetime.today()
-        current_week_number = today.isocalendar()[1]
-        
-        for match in match_elements:
-            try:
-                # Get match link
-                match_link = match.find_element(By.CSS_SELECTOR, "a.match").get_attribute("href")
-                
-                # Get match time
-                time_element = match.find_element(By.CLASS_NAME, "matchTime")
-                match_time = time_element.text.strip()
-                unix_time = int(match.get_attribute("data-zonedgrouping-entry-unix"))
-                match_datetime = datetime.fromtimestamp(unix_time/1000)
-                
-                # Check if match is in the current week
-                match_week_number = match_datetime.isocalendar()[1]
-                if match_week_number != current_week_number:
-                    continue
-                
-                # Get teams
-                team_elements = match.find_elements(By.CLASS_NAME, "matchTeam")
-                teams = []
-                for team_element in team_elements:
-                    team_name = team_element.find_element(By.CLASS_NAME, "matchTeamName").text.strip()
-                    team_logo = get_team_logo(team_element)
-                    teams.append({
-                        "name": team_name,
-                        "logo": team_logo
-                    })
-                
-                # Get match format
-                match_format = get_match_format(match)
-                
-                # Get event information
-                event_logo, event_name = get_event_info(match)
-                
-                # Create match data structure
-                match_data = {
-                    'date': match_datetime.strftime('%Y-%m-%d'),
-                    'time': match_time,
-                    'teams': teams,
-                    'format': match_format,
-                    'event': {
-                        'name': event_name,
-                        'logo': event_logo
-                    },
-                    'link': match_link
-                }
-                
-                matches_this_week.append(match_data)
-                
-                print(f"Found match: {teams[0]['name']} vs {teams[1]['name']} ({match_time})")
-                
-            except Exception as e:
-                print(f"Error processing match: {e}")
-                continue
-                
-    except Exception as e:
-        print(f"Error during scraping: {e}")
-        
-    finally:
-        print("Closing browser...")
-        driver.quit()
-    
-    return matches_this_week
-
 def scrape_matches_for_days(days=5):
     """Scrape matches for a specific number of days starting from today."""
     print("Setting up Chrome driver...")
@@ -340,65 +256,249 @@ def scrape_matches_for_days(days=5):
     return matches_for_days
 
 def scrape_match_odds(driver, match_url):
-    """Extract betting odds for a specific match."""
-    print(f"Scraping odds for match: {match_url}")
-    odds_data = []
+    """
+    Extract betting odds for a specific match.
     
+    Args:
+        driver (WebDriver): Selenium WebDriver instance.
+        match_url (str): URL of the match page to scrape.
+    
+    Returns:
+        dict: Contains 'teams' (list of team names) and 'odds' (list of provider odds).
+    """
+    print(f"Scraping odds for match: {match_url}")
+    driver = setup_driver()
+    odds_data = []
+    team_1_name = ""
+    team_2_name = ""
+
     try:
+        # Load the match page
         driver.get(match_url)
+
+        # Handle cookie consent
+        handle_cookie_consent(driver)
+
+        # Wait for the betting section to load
         wait = WebDriverWait(driver, 10)
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, "betting-section")))
-        
+
+        # Locate the betting section
         betting_section = driver.find_element(By.CLASS_NAME, "betting-section")
-        providers = betting_section.find_elements(By.CSS_SELECTOR, "tr.provider")
         
-        for provider in providers:
+        # Extract team names
+        team_cells = betting_section.find_elements(By.CSS_SELECTOR, "tr:first-child td.team-cell")
+        team_1_name = team_cells[0].text.strip()
+        team_2_name = team_cells[-1].text.strip()
+
+        # Locate provider rows
+        provider_rows = betting_section.find_elements(By.CSS_SELECTOR, "tr.provider")
+
+        for provider in provider_rows:
             try:
-                # Check if odds are present
-                odds_cells = provider.find_elements(By.CSS_SELECTOR, "td.odds")
-                if not odds_cells:
+                # Skip rows with the "noOdds" class
+                if "noOdds" in provider.get_attribute("class"):
                     continue
-                
+
+                # Check for odds cells
+                odds_cells = provider.find_elements(By.CSS_SELECTOR, "td.odds-cell.border-left")
+
                 # Extract provider name
                 provider_logo = provider.find_element(By.CSS_SELECTOR, "a.betting-logo-link")
                 provider_name = provider_logo.get_attribute("aria-label")
-                
-                # Extract odds
-                odds = [cell.text.strip() for cell in odds_cells]
+
+                # Extract odds for Team 1 and Team 2
+                team_1_odds = odds_cells[0].find_element(By.TAG_NAME, "a").text.strip() if odds_cells[0].find_elements(By.TAG_NAME, "a") else "-"
+                team_2_odds = odds_cells[-1].find_element(By.TAG_NAME, "a").text.strip() if odds_cells[-1].find_elements(By.TAG_NAME, "a") else "-"
+
+                # Ensure odds are valid (numbers, not "-")
+                if not team_1_odds.replace('.', '', 1).isdigit() or not team_2_odds.replace('.', '', 1).isdigit():
+                    print(f"Invalid odds detected for provider: {provider_name}")
+                    continue
+
+                # Append valid provider data to the result
                 odds_data.append({
                     "provider": provider_name,
-                    "odds": odds
+                    team_1_name: team_1_odds,
+                    team_2_name: team_2_odds,
                 })
+
             except Exception as e:
-                print(f"Error processing provider row: {e}")
+                # print(f"Error processing provider row: {e}")
                 continue
-        
+
     except Exception as e:
         print(f"Error scraping match odds: {e}")
-    return odds_data
+
+    return {
+        'teams': [team_1_name, team_2_name],
+        'odds': odds_data
+    }
+
+def check_arbitrage(teams, odds_data, total_investment=100):
+    """
+    Check for arbitrage opportunities in the given odds data.
+    
+    Args:
+        teams (list): Team names as [team1, team2].
+        odds_data (list): List of provider odds.
+    
+    Returns:
+        dict: Arbitrage details if found, None otherwise.
+    """
+    team1, team2 = teams[0], teams[1]
+    providers = []
+    
+    for entry in odds_data:
+        try:
+            provider = entry['provider']
+            odds1 = float(entry[team1].replace(',', '.'))
+            odds2 = float(entry[team2].replace(',', '.'))
+            providers.append({
+                'provider': provider,
+                team1: odds1,
+                team2: odds2
+            })
+        except (KeyError, ValueError) as e:
+            print(f"Skipping provider {entry['provider']}: {e}")
+            continue
+    
+    min_sum = float('inf')
+    best_pair = None
+    
+    for p1 in providers:
+        for p2 in providers:
+            if p1['provider'] == p2['provider']:
+                continue  # Must be different providers
+            sum_inv = (1 / p1[team1]) + (1 / p2[team2])
+            if sum_inv < min_sum:
+                min_sum = sum_inv
+                best_pair = (p1, p2)
+    
+    if min_sum < 1:
+        return {
+            'team1_provider': best_pair[0]['provider'],
+            'team1_odds': best_pair[0][team1],
+            'team2_provider': best_pair[1]['provider'],
+            'team2_odds': best_pair[1][team2],
+            'arbitrage_percent': (1 - min_sum) * 100,
+            'total_investment': total_investment,
+            'stake_team1': total_investment / (min_sum * best_pair[0][team1]),
+            'stake_team2': total_investment / (min_sum * best_pair[1][team2])
+        }
+    else:
+        return None
+
+def check_arbitrage_10_win(teams, odds_data):
+    """
+    Check for arbitrage opportunities in the given odds data.
+    Modified to calculate stakes for fixed $10 profit.
+    """
+    team1, team2 = teams[0], teams[1]
+    providers = []
+    
+    for entry in odds_data:
+        try:
+            provider = entry['provider']
+            odds1 = float(entry[team1].replace(',', '.'))
+            odds2 = float(entry[team2].replace(',', '.'))
+            providers.append({
+                'provider': provider,
+                team1: odds1,
+                team2: odds2
+            })
+        except (KeyError, ValueError) as e:
+            print(f"Skipping provider {entry['provider']}: {e}")
+            continue
+    
+    min_sum = float('inf')
+    best_pair = None
+    
+    for p1 in providers:
+        for p2 in providers:
+            if p1['provider'] == p2['provider']:
+                continue
+            sum_inv = (1 / p1[team1]) + (1 / p2[team2])
+            if sum_inv < min_sum:
+                min_sum = sum_inv
+                best_pair = (p1, p2)
+    
+    if min_sum < 1:
+        # Calculate required total investment for $10 profit
+        arbitrage_percent = (1 - min_sum) * 100
+        required_total_investment = 10 / (arbitrage_percent / 100)
+        
+        return {
+            'team1_provider': best_pair[0]['provider'],
+            'team1_odds': best_pair[0][team1],
+            'team2_provider': best_pair[1]['provider'],
+            'team2_odds': best_pair[1][team2],
+            'arbitrage_percent': arbitrage_percent,
+            'required_investment': required_total_investment,
+            'stake_team1': (required_total_investment / min_sum) / best_pair[0][team1],
+            'stake_team2': (required_total_investment / min_sum) / best_pair[1][team2],
+            'guaranteed_profit': 10.00  # Fixed profit
+        }
+    else:
+        return None
 
 if __name__ == "__main__":
     print("Starting HLTV scraper for the first two matches...")
     print("-" * 50)
-    
-    matches_for_days = scrape_matches_for_days(days=1)  # Scrape matches for today
-    
+
+    # Set your desired investment amount here
+    total_investment = 200  # You can change this value to any amount you want
+
+    # Scrape matches for today
+    matches_for_days = scrape_matches_for_days(days=1)
+
     if matches_for_days:
         print("\nScraping odds for the first two matches...")
         print("=" * 50)
-        
+
         driver = setup_driver()
         try:
-            for i, match in enumerate(matches_for_days[:2]):  # Only take the first two matches
+            # for i, match in enumerate(matches_for_days[:2]):  # Only take the first two matches
+            for i, match in enumerate(matches_for_days):  # Only take the first two matches
                 print(f"Match {i + 1}: {match['teams'][0]['name']} vs {match['teams'][1]['name']}")
                 print(f"Match link: {match['link']}")
-                
-                odds = scrape_match_odds(driver, match['link'])
-                if odds:
-                    print("\nOdds for this match:")
-                    for entry in odds:
-                        print(f"Provider: {entry['provider']}")
-                        print(f"Odds: {entry['odds']}")
+
+                # Scrape odds for the match
+                # Scrape odds for the match
+                odds_info = scrape_match_odds(driver, match['link'])
+                if odds_info['odds']:
+                    # print("\nOdds for this match:")
+                    # for entry in odds_info['odds']:
+                    #     print(f"Provider: {entry['provider']}")
+                    #     print(f"{odds_info['teams'][0]}: {entry[odds_info['teams'][0]]}")
+                    #     print(f"{odds_info['teams'][1]}: {entry[odds_info['teams'][1]]}")
+                    #     print("-" * 30)
+                    
+                    # Check for arbitrage
+                    # arbitrage = check_arbitrage(odds_info['teams'], odds_info['odds'], total_investment)
+                    # if arbitrage:
+                    #     print("\n*** Arbitrage Opportunity Found! ***")
+                    #     print(f"Bet on {odds_info['teams'][0]} at {arbitrage['team1_provider']} with odds {arbitrage['team1_odds']:.2f}")
+                    #     print(f"Bet on {odds_info['teams'][1]} at {arbitrage['team2_provider']} with odds {arbitrage['team2_odds']:.2f}")
+                    #     print(f"Arbitrage Percentage: {arbitrage['arbitrage_percent']:.2f}%")
+                    #     print(f"Stake on {odds_info['teams'][0]}: ${arbitrage['stake_team1']:.2f}")
+                    #     print(f"Stake on {odds_info['teams'][1]}: ${arbitrage['stake_team2']:.2f}")
+                    #     total_stake = arbitrage['stake_team1'] + arbitrage['stake_team2']
+                    #     profit = arbitrage['total_investment'] / (1 - arbitrage['arbitrage_percent'] / 100) - arbitrage['total_investment']
+                    #     print(f"Total Stake: ${total_stake:.2f}")
+                    #     print(f"Guaranteed Profit: ${profit:.2f}")
+                    arbitrage = check_arbitrage_10_win(odds_info['teams'], odds_info['odds'])
+                    if arbitrage:
+                        print("\n*** Arbitrage Opportunity Found! ***")
+                        print(f"Bet on {odds_info['teams'][0]} at {arbitrage['team1_provider']} with odds {arbitrage['team1_odds']:.2f}")
+                        print(f"Bet on {odds_info['teams'][1]} at {arbitrage['team2_provider']} with odds {arbitrage['team2_odds']:.2f}")
+                        print(f"Arbitrage Percentage: {arbitrage['arbitrage_percent']:.2f}%")
+                        print(f"Required Total Investment: ${arbitrage['required_investment']:.2f}")
+                        print(f"Stake on {odds_info['teams'][0]}: ${arbitrage['stake_team1']:.2f}")
+                        print(f"Stake on {odds_info['teams'][1]}: ${arbitrage['stake_team2']:.2f}")
+                        print(f"Guaranteed Profit: ${arbitrage['guaranteed_profit']:.2f}")
+                    else:
+                        print("\nNo arbitrage opportunity found for this match.")
                 else:
                     print("No valid odds found for this match.")
                 print("-" * 50)
@@ -406,83 +506,3 @@ if __name__ == "__main__":
             driver.quit()
     else:
         print("\nNo matches found for today.")
-
-# if __name__ == "__main__":
-#     print("Starting HLTV scraper for specific date range...")
-#     print("-" * 50)
-    
-#     days = 5  # Adjust the number of days as needed
-#     matches_for_days = scrape_matches_for_days(days=days)
-    
-#     if matches_for_days:
-#         print(f"\nMatches for the next {days} days:")
-#         print("=" * 50)
-#         for match in matches_for_days:
-#             try:
-#                 # Ensure the teams list contains exactly 2 teams
-#                 if len(match['teams']) < 2:
-#                     print(f"Skipping incomplete match data: {match}")
-#                     continue
-                
-#                 team1 = match['teams'][0]['name']
-#                 team2 = match['teams'][1]['name']
-#                 event_name = match['event'].get('name', 'Unknown Event')
-#                 print(f"{match['date']} {match['time']}: {team1} vs {team2}")
-#                 print(f"Format: {match['format']}")
-#                 print(f"Event: {event_name}")
-#                 print(f"Match link: {match['link']}")
-#                 print("-" * 30)
-#             except Exception as e:
-#                 print(f"Error displaying match: {e}")
-#                 continue
-#     else:
-#         print(f"\nNo matches found for the next {days} days.")
-
-
-# if __name__ == "__main__":
-#     print("Starting HLTV scraper for matches this week...")
-#     print("-" * 50)
-    
-#     matches_this_week = scrape_matches_this_week()
-    
-#     if matches_this_week:
-#         print("\nMatches for this week:")
-#         print("=" * 50)
-#         for match in matches_this_week:
-#             print(f"{match['date']} {match['time']}: {match['teams'][0]['name']} vs {match['teams'][1]['name']}")
-#             print(f"Format: {match['format']}")
-#             print(f"Event: {match['event']['name']}")
-#             print(f"Match link: {match['link']}")
-#             print("-" * 30)
-#     else:
-#         print("\nNo matches for this week were found.")
-
-
-# if __name__ == "__main__":
-#     print("Starting HLTV scraper with Selenium...")
-#     print("-" * 50)
-    
-#     try:
-#         import selenium
-#         import webdriver_manager
-#     except ImportError:
-#         print("Required packages not found. Please install them using:")
-#         print("pip install selenium webdriver-manager")
-#         exit(1)
-    
-#     matches_by_week = scrape_matches_this_week()
-    
-#     if matches_by_week:
-#         print("\nUpcoming matches by week:")
-#         print("=" * 50)
-#         for week, matches in matches_by_week.items():
-#             print(f"\n{week} - {len(matches)} matches:")
-#             print("-" * 50)
-#             for match in matches:
-#                 print(f"{match['date']} {match['time']}: {match['teams'][0]['name']} vs {match['teams'][1]['name']}")
-#                 print(f"Format: {match['format']}")
-#                 print(f"Event: {match['event']['name']}")
-#                 print(f"Match link: {match['link']}")
-#                 print("-" * 30)
-#     else:
-#         print("\nNo upcoming matches were found.")
