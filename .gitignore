@@ -1,10 +1,37 @@
 # Python
 __pycache__/
 *.py[cod]
-*.env
-*.venv
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+venv/
+.env
+.venv/
 *.log
-*.exe
+*.pot
 
-# Selenium
-LICENSE.chromedriver
+# Selenium/WebDriver
+chromedriver*
+geckodriver*
+*.exe
+*.msi
+
+# IDE Specific
+.vscode/
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS Generated
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
