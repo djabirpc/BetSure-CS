@@ -4,8 +4,7 @@ __pycache__/
 *.env
 *.venv
 *.log
+*.exe
 
 # Selenium
-chromedriver.exe
-geckodriver
 LICENSE.chromedriver
